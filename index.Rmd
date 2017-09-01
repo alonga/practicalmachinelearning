@@ -1,0 +1,173 @@
+
+---
+title: "Practical Machine Learning Final Report: Exercise Prediction "
+author: "Alon Gur-Arie"
+keep_md: yes
+output: html_document
+---
+01.09.2017
+## Data ##
+The data for this project involves readings from wearable fitness trackers. The following is an excerpt from the Coursera project description:
+
+> "Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset)".
+
+### Data Cleaning and Preparation ###
+The raw data comes in two files,a training dataset and a testing dataset. 
+
+```{r, results='hide', echo=FALSE, include=FALSE}
+library(caret)
+library(png)
+library(grid)
+```
+```{r}
+train_set <- read.csv('./pml-training.csv', header=T)
+validation_set <- read.csv('./pml-testing.csv', header=T)
+```
+
+#### Data Partitioning ####
+In light of the fact I'll be predicting classes in the testing dataset, I will split the training data into a training partition and a testing partition and I will  use the data in the pml-testing.csv file as a validation sample. I'll use cross validation within the training partition to improve the model fit and after that, I will do an out-of-sample test, using the testing partition.
+
+```{r}
+set.seed(127)
+training_sample <- createDataPartition(y=train_set$classe, p=0.7, list=FALSE)
+training <- train_set[training_sample, ]
+testing <- train_set[-training_sample, ]
+```
+
+#### Identification on Non-Zero Data ####
+In order to predict classes in to which  the validation sample will be devided, I'll need to use features that are non-zero in the validation data set. I prefer to stay away from the even looking at the validation data set so I will  not be influenced by It's contents during the model fitting process. However, due to the fact we are not dealing  with time series analysis, It seems to me that scaning  the validation sample for non-zero data columns is not an issue in regard to  finding a predictive model that has a good fit to the sample data.
+
+```{r}
+all_zero_colnames <- sapply(names(validation_set), function(x) all(is.na(validation_set[,x])==TRUE))
+nznames <- names(all_zero_colnames)[all_zero_colnames==FALSE]
+nznames <- nznames[-(1:7)]
+nznames <- nznames[1:(length(nznames)-1)]
+```
+
+I will fit The models, using the following data columns:
+```{r, echo=FALSE}
+print(sort(nznames))
+```
+
+## Model building ##
+
+For this project I'll use 3 differnt model algorithms and after the models are fitted, I will look to see which of them, provides the best out-of-sample accuracy. The three model types I'm going to use are:
+
+1. Decision trees with CART (rpart)
+2. Stochastic gradient boosting trees (gbm)
+3. Random forest decision trees (rf)
+
+The code to run fit these models is:
+
+```{r, echo=FALSE}
+fitControl <- trainControl(method='cv', number = 3)
+```
+
+```{r, eval=FALSE}
+model_cart <- train(
+  classe ~ ., 
+  data=training[, c('classe', nznames)],
+  trControl=fitControl,
+  method='rpart'
+)
+save(model_cart, file='./ModelFitCART.RData')
+model_gbm <- train(
+  classe ~ ., 
+  data=training[, c('classe', nznames)],
+  trControl=fitControl,
+  method='gbm'
+)
+save(model_gbm, file='./ModelFitGBM.RData')
+model_rf <- train(
+  classe ~ ., 
+  data=training[, c('classe', nznames)],
+  trControl=fitControl,
+  method='rf',
+  ntree=100
+)
+save(model_rf, file='./ModelFitRF.RData')
+```
+
+### Cross validation ###
+Cross validation is preformed for each model with K = 3. This parameter is set in the above code chunk using the fitControl object as shown below:
+
+```{r, eval=FALSE}
+fitControl <- trainControl(method='cv', number = 3)
+```
+
+## Model Assessment (Based on Out of sample error) ##
+
+```{r, echo=FALSE, results='hide'}
+load('./ModelFitCART.RData')
+load('./ModelFitGBM.RData')
+load('./ModelFitRF.RData')
+```
+
+```{r, message=FALSE}
+predCART <- predict(model_cart, newdata=testing)
+cmCART <- confusionMatrix(predCART, testing$classe)
+predGBM <- predict(model_gbm, newdata=testing)
+cmGBM <- confusionMatrix(predGBM, testing$classe)
+predRF <- predict(model_rf, newdata=testing)
+cmRF <- confusionMatrix(predRF, testing$classe)
+AccuracyResults <- data.frame(
+  Model = c('CART', 'GBM', 'RF'),
+  Accuracy = rbind(cmCART$overall[1], cmGBM$overall[1], cmRF$overall[1])
+)
+print(AccuracyResults)
+```
+
+Based on an assessment of these 3 model fits and out-of-sample results, it seems as if  both gradient boosting and random forests outperform the CART model, with random forests being slightly more accurate. The confusion matrix for the random forest model is below. The estimated accuracy of the model is 99.3% and the estimated out-of-sample error based on our fitted model applied to the cross validation dataset is 0.7%.
+
+```{r, echo=FALSE}
+print(cmRF$table)
+```
+
+The next step in modeling process  would  be to create an ensemble model of these three model results, however, given the high accuracy of the random forest model, I don't believe this process is necessary here. I'll accept the random forest model as the best model and will proceed on to prediction based on the validation sample.
+
+```{r, echo=FALSE}
+champion_model <- model_rf
+```
+
+```{r, echo=FALSE}
+imp <- varImp(champion_model)
+imp$importance$Overall <- sort(imp$importance$Overall, decreasing=TRUE)
+featureDF <- data.frame(
+  FeatureName=row.names(imp$importance),
+  Importance=imp$importance$Overall
+)
+```
+
+The champion model includes the following 5 features as the most important for predicting the exercise. A feature plot is included to show how this features are related to each other and how the clusters of exercise class begin to appear using these 5 features.
+```{r, echo=FALSE}
+print(featureDF[1:5,])
+```
+
+```{r, eval=FALSE, echo=FALSE}
+# this code is here to show how the figure was created. The code  Not executed to save memory during the creation of the html file.
+featurePlot(x=training[, featureDF$FeatureName[1:5]], y=training$classe, plot = 'pairs')
+```
+
+```{r fig.width=10, fig.height=10, echo=FALSE}
+img <- readPNG("./FeaturePlot.png")
+grid.raster(img)
+```
+
+## Prediction ##
+As a last stage in the project, I'll use the validation data sample ('pml-testing.csv') to predict a classe for each of the 20 observations based on the other information we know about these observations contained in the validation sample.
+
+```{r}
+predValidation <- predict(champion_model, newdata=validation_set)
+ValidationPredictionResults <- data.frame(
+  problem_id=validation_set$problem_id,
+  predicted=predValidation
+)
+print(ValidationPredictionResults)
+```
+
+## Conclusion ##
+
+Based on the data available, I am able to fit a reasonably sound model with a high degree of accuracy in predicting out of sample observations. One action which was preformed during this this project, that can be skiped in future similar  work, is data preparation, during which I limited my analysis to non-zero features in the validation sample. For example, when fitting a model to all training data columns, some features that are totaly missing in the validation sample do include non-zero items in the training sample and are thus used in the decision tree models. 
+
+Despite the fact that questions regarding missing data in the samples remain open, the Random Rorest model with cross-validation produces a highly accurate model (Accurecy 99.3%) that is sufficient for predictive analytics.
+
