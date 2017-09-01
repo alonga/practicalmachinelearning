@@ -5,7 +5,7 @@ author: "Alon Gur-Arie"
 keep_md: yes
 output: html_document
 ---
-01.09.2017
+01.09.2017</br></br>
 ## Data ##
 The data for this project involves readings from wearable fitness trackers. The following is an excerpt from the Coursera project description:
 
